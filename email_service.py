@@ -29,7 +29,6 @@ def send_email(to_email, subject, body):
             smtp.login(sender, password)
             smtp.send_message(msg)
             print(f"Email sent to {to_email}")
-
     except Exception as e:
         print(f"Email failed: {e}")
 
@@ -71,14 +70,10 @@ Booking time:
 {start_time}
 
 Thanks,
-The Bar Team
+Nomad Brewing Co
 """
 
-    send_email(
-        to_email=to_email,
-        subject="Booking confirmed",
-        body=body,
-    )
+    send_email(to_email, "Booking confirmed", body)
 
 
 def send_customer_rejected_email(to_email, name, start_time):
@@ -93,11 +88,7 @@ Unfortunately, we are unable to accept your booking at:
 Please contact us directly if you would like to discuss another time.
 
 Thanks,
-The Bar Team
+Nomad Brewing Co
 """
 
-    send_email(
-        to_email=to_email,
-        subject="Booking request update",
-        body=body,
-    )
+    send_email(to_email, "Booking request update", body)
