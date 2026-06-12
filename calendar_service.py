@@ -12,63 +12,64 @@ SERVICE_ACCOUNT_FILE = "service-account.json"
 def get_calendar_service():
     credentials = service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE,
-        scopes=SCOPES
+        scopes=SCOPES,
     )
 
     return build("calendar", "v3", credentials=credentials)
 
 
-def create_booking_event(name, email, phone, guests, start_time, end_time, details):
+def create_booking_event(name, email, phone, guests, start_time, end_time, details, color_id="5"):
     service = get_calendar_service()
-
     calendar_id = os.getenv("GOOGLE_CALENDAR_ID")
 
     event = {
-        "summary": f"Booking: {name} - {guests} guests",
+        "summary": name,
         "description": f"""
 Customer name: {name}
 Email: {email}
 Phone: {phone}
 Guests: {guests}
 
-Details:
 {details}
 """,
+        "colorId": color_id,
         "start": {
             "dateTime": start_time.isoformat(),
-            "timeZone": "Australia/Sydney"
+            "timeZone": "Australia/Sydney",
         },
         "end": {
             "dateTime": end_time.isoformat(),
-            "timeZone": "Australia/Sydney"
-        }
+            "timeZone": "Australia/Sydney",
+        },
     }
 
     created_event = service.events().insert(
         calendarId=calendar_id,
-        body=event
+        body=event,
     ).execute()
 
     return {
-    "link": created_event.get("htmlLink"),
-    "event_id": created_event.get("id")
-}
+        "link": created_event.get("htmlLink"),
+        "event_id": created_event.get("id"),
+    }
 
-def update_booking_event_title(event_id, new_title):
+
+def update_booking_event_status(event_id, new_title, color_id):
     service = get_calendar_service()
     calendar_id = os.getenv("GOOGLE_CALENDAR_ID")
 
     event = service.events().get(
         calendarId=calendar_id,
-        eventId=event_id
+        eventId=event_id,
     ).execute()
 
     event["summary"] = new_title
+    event["colorId"] = color_id
 
     updated_event = service.events().update(
         calendarId=calendar_id,
         eventId=event_id,
-        body=event
+        body=event,
     ).execute()
 
     return updated_event.get("htmlLink")

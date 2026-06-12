@@ -4,9 +4,13 @@ from pydantic import BaseModel, EmailStr
 from datetime import datetime, timedelta
 import os
 
-from calendar_service import create_booking_event, update_booking_event_title
-from email_service import send_customer_email, send_staff_email
-from rules import validate_booking_rules, MAX_GUESTS_BEFORE_ALERT
+from calendar_service import create_booking_event, update_booking_event_status
+from email_service import (
+    send_staff_review_email,
+    send_customer_approved_email,
+    send_customer_rejected_email,
+)
+from rules import validate_booking_rules
 from database import SessionLocal, BookingRecord, create_tables
 
 
@@ -38,7 +42,7 @@ def receive_booking(booking: BookingRequest):
         rule_status = "✅ Booking meets current rules"
         calendar_title = f"PENDING - {booking.name}"
     else:
-        rule_status = f"⚠️ Rule warning: {rule_message}"
+        rule_status = f"⚠️ Rule warning:\n{rule_message}"
         calendar_title = f"REVIEW REQUIRED - {booking.name}"
 
     calendar_result = create_booking_event(
@@ -58,7 +62,8 @@ Rule check:
 
 Customer details:
 {booking.details}
-"""
+""",
+        color_id="5",
     )
 
     calendar_link = calendar_result["link"]
@@ -88,9 +93,11 @@ Customer details:
     db.close()
 
     base_url = os.getenv("BASE_URL", "https://wix-booking-automation.onrender.com")
-    review_link = f"{base_url}/review-booking/{booking_id}"
+    approval_secret = os.getenv("APPROVAL_SECRET", "change-this-secret")
 
-    send_staff_email_with_review_link(booking, rule_status, review_link)
+    review_link = f"{base_url}/review-booking/{booking_id}?secret={approval_secret}"
+
+    send_staff_review_email(booking, rule_status, review_link)
 
     return {
         "status": "pending",
@@ -101,25 +108,11 @@ Customer details:
     }
 
 
-def send_staff_email_with_review_link(booking, rule_status, review_link):
-    print("NEW BOOKING NEEDS REVIEW")
-    print(f"Name: {booking.name}")
-    print(f"Email: {booking.email}")
-    print(f"Phone: {booking.phone}")
-    print(f"Guests: {booking.guests}")
-    print(f"Start time: {booking.start_time}")
-    print(f"Rule check: {rule_status}")
-    print(f"Review link: {review_link}")
-
-    try:
-        send_staff_email(booking)
-    except Exception as error:
-        print("Staff email failed, but booking was still saved.")
-        print(error)
-
-
 @app.get("/review-booking/{booking_id}", response_class=HTMLResponse)
-def review_booking(booking_id: int):
+def review_booking(booking_id: int, secret: str):
+    if secret != os.getenv("APPROVAL_SECRET", "change-this-secret"):
+        return "<h1>Unauthorized</h1>"
+
     db = SessionLocal()
     booking = db.query(BookingRecord).filter(BookingRecord.id == booking_id).first()
     db.close()
@@ -127,10 +120,13 @@ def review_booking(booking_id: int):
     if not booking:
         return "<h1>Booking not found</h1>"
 
+    approval_secret = os.getenv("APPROVAL_SECRET", "change-this-secret")
+
     return f"""
     <html>
-        <body style="font-family: Arial; padding: 30px; max-width: 700px; margin: auto;">
+        <body style="font-family: Arial; padding: 30px; max-width: 750px; margin: auto;">
             <h1>Booking Request</h1>
+
             <h2>Status: {booking.status.upper()}</h2>
 
             <p><b>Name:</b> {booking.name}</p>
@@ -142,7 +138,7 @@ def review_booking(booking_id: int):
             <p><b>Details:</b> {booking.details}</p>
 
             <h2>Rule Check</h2>
-            <p style="font-size: 18px;">{booking.rule_warnings}</p>
+            <pre style="font-size: 16px; white-space: pre-wrap;">{booking.rule_warnings}</pre>
 
             <p>
                 <a href="{booking.calendar_link}" target="_blank">
@@ -152,7 +148,7 @@ def review_booking(booking_id: int):
 
             <br>
 
-            <a href="/approve-booking/{booking.id}">
+            <a href="/approve-booking/{booking.id}?secret={approval_secret}">
                 <button style="font-size: 24px; padding: 15px 25px; background: green; color: white; border: none; border-radius: 8px;">
                     APPROVE BOOKING
                 </button>
@@ -160,7 +156,7 @@ def review_booking(booking_id: int):
 
             <br><br>
 
-            <a href="/reject-booking/{booking.id}">
+            <a href="/reject-booking/{booking.id}?secret={approval_secret}">
                 <button style="font-size: 24px; padding: 15px 25px; background: red; color: white; border: none; border-radius: 8px;">
                     REJECT BOOKING
                 </button>
@@ -171,7 +167,10 @@ def review_booking(booking_id: int):
 
 
 @app.get("/approve-booking/{booking_id}", response_class=HTMLResponse)
-def approve_booking(booking_id: int):
+def approve_booking(booking_id: int, secret: str):
+    if secret != os.getenv("APPROVAL_SECRET", "change-this-secret"):
+        return "<h1>Unauthorized</h1>"
+
     db = SessionLocal()
     booking = db.query(BookingRecord).filter(BookingRecord.id == booking_id).first()
 
@@ -186,35 +185,37 @@ def approve_booking(booking_id: int):
     booking.status = "approved"
 
     if booking.calendar_event_id:
-        update_booking_event_title(
+        update_booking_event_status(
             booking.calendar_event_id,
-            f"CONFIRMED - {booking.name} - {booking.guests} guests"
+            f"CONFIRMED - {booking.name} - {booking.guests} guests",
+            "10",
         )
-
-    db.commit()
 
     customer_email = booking.email
     customer_name = booking.name
     start_time = booking.start_time
 
+    db.commit()
     db.close()
 
-    # Email currently disabled while testing.
-    email_status = "Booking approved. Confirmation email is currently disabled."
+    send_customer_approved_email(customer_email, customer_name, start_time)
 
-    return f"""
+    return """
     <html>
         <body style="font-family: Arial; padding: 30px;">
             <h1>Booking Approved</h1>
-            <p>{email_status}</p>
-            <p>You can now close this page.</p>
+            <p>The Google Calendar event has been marked as confirmed.</p>
+            <p>If email settings are configured, the customer has been sent a confirmation email.</p>
         </body>
     </html>
     """
 
 
 @app.get("/reject-booking/{booking_id}", response_class=HTMLResponse)
-def reject_booking(booking_id: int):
+def reject_booking(booking_id: int, secret: str):
+    if secret != os.getenv("APPROVAL_SECRET", "change-this-secret"):
+        return "<h1>Unauthorized</h1>"
+
     db = SessionLocal()
     booking = db.query(BookingRecord).filter(BookingRecord.id == booking_id).first()
 
@@ -225,20 +226,75 @@ def reject_booking(booking_id: int):
     booking.status = "rejected"
 
     if booking.calendar_event_id:
-        update_booking_event_title(
+        update_booking_event_status(
             booking.calendar_event_id,
-            f"❌ REJECTED - {booking.name} - {booking.guests} guests"
+            f"❌ REJECTED - {booking.name} - {booking.guests} guests",
+            "11",
         )
+
+    customer_email = booking.email
+    customer_name = booking.name
+    start_time = booking.start_time
 
     db.commit()
     db.close()
+
+    send_customer_rejected_email(customer_email, customer_name, start_time)
 
     return """
     <html>
         <body style="font-family: Arial; padding: 30px;">
             <h1>Booking Rejected</h1>
-            <p>No confirmation email has been sent.</p>
-            <p>You can now close this page.</p>
+            <p>The Google Calendar event has been marked as rejected.</p>
+            <p>If email settings are configured, the customer has been sent a rejection email.</p>
+        </body>
+    </html>
+    """
+
+
+@app.get("/bookings", response_class=HTMLResponse)
+def bookings_dashboard(secret: str):
+    if secret != os.getenv("APPROVAL_SECRET", "change-this-secret"):
+        return "<h1>Unauthorized</h1>"
+
+    db = SessionLocal()
+    bookings = db.query(BookingRecord).order_by(BookingRecord.created_at.desc()).all()
+    db.close()
+
+    approval_secret = os.getenv("APPROVAL_SECRET", "change-this-secret")
+
+    rows = ""
+
+    for booking in bookings:
+        rows += f"""
+        <tr>
+            <td>{booking.id}</td>
+            <td>{booking.status}</td>
+            <td>{booking.name}</td>
+            <td>{booking.guests}</td>
+            <td>{booking.start_time}</td>
+            <td><pre style="white-space: pre-wrap;">{booking.rule_warnings}</pre></td>
+            <td><a href="/review-booking/{booking.id}?secret={approval_secret}">Review</a></td>
+        </tr>
+        """
+
+    return f"""
+    <html>
+        <body style="font-family: Arial; padding: 30px;">
+            <h1>Booking Dashboard</h1>
+
+            <table border="1" cellpadding="10" cellspacing="0">
+                <tr>
+                    <th>ID</th>
+                    <th>Status</th>
+                    <th>Name</th>
+                    <th>Guests</th>
+                    <th>Start Time</th>
+                    <th>Warnings</th>
+                    <th>Review</th>
+                </tr>
+                {rows}
+            </table>
         </body>
     </html>
     """
