@@ -5,12 +5,12 @@ OPENING_HOURS = {
     1: None,
     2: {"open": time(17, 0), "close": time(22, 0)},
     3: {"open": time(17, 0), "close": time(22, 0)},
-    4: {"open": time(17, 0), "close": time(0, 0)},
+    4: {"open": time(12, 0), "close": time(0, 0)},
     5: {"open": time(12, 0), "close": time(0, 0)},
     6: {"open": time(12, 0), "close": time(22, 0)},
 }
 
-MIN_GUESTS = 20
+MIN_GUESTS = 0
 MIN_HOURS_NOTICE = 2
 MINUTES_BEFORE_CLOSE_WARNING = 60
 

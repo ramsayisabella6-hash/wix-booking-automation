@@ -14,7 +14,6 @@ SessionLocal = sessionmaker(bind=engine)
 
 Base = declarative_base()
 
-
 class BookingRecord(Base):
     __tablename__ = "bookings"
 

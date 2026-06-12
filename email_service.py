@@ -20,9 +20,14 @@ def send_email(to_email, subject, body):
     msg["To"] = to_email
     msg.set_content(body)
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as smtp:
+
+    try:
+    with smtplib.SMTP_SSL("mail.nomadbrewingco.com.au", 465, timeout=10) as smtp:
         smtp.login(sender, password)
         smtp.send_message(msg)
+
+except Exception as e:
+    print(f"Email failed: {e}")
 
 
 def send_staff_review_email(booking, rule_status, review_link):
