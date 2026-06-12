@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 
 from calendar_service import create_booking_event
 from email_service import send_customer_email, send_staff_email
+from rules import validate_booking_rules, MAX_GUESTS_BEFORE_ALERT
+from sms_service import send_sms_alert
 
 app = FastAPI()
 
@@ -24,34 +26,38 @@ def home():
 
 @app.post("/wix-booking")
 def receive_booking(booking: BookingRequest):
-    if booking.guests < 20:
-        raise HTTPException(status_code=400, detail="Minimum 20 guests required")
+    is_valid, message = validate_booking_rules(booking)
 
-    if booking.start_time.hour >= 22:
-        raise HTTPException(status_code=400, detail="No bookings after 10pm")
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=message)
 
     end_time = booking.start_time + timedelta(hours=3)
 
     calendar_link = create_booking_event(
-        name=booking.name,
+        name=f"PENDING - {booking.name}",
         email=booking.email,
         phone=booking.phone,
         guests=booking.guests,
         start_time=booking.start_time,
         end_time=end_time,
-        details=booking.details
-    )
+        details=f"""
+STATUS: PENDING APPROVAL
 
-    send_customer_email(
-        to_email=booking.email,
-        name=booking.name,
-        start_time=booking.start_time
+Customer has NOT been sent confirmation yet.
+
+{booking.details}
+"""
     )
 
     send_staff_email(booking)
 
+    if booking.guests >= MAX_GUESTS_BEFORE_ALERT:
+        send_sms_alert(
+    f"Large booking request: {booking.name}, {booking.guests} guests, {booking.start_time}"
+)
+
     return {
-        "status": "success",
-        "message": "Booking processed",
+        "status": "pending",
+        "message": "Booking received and awaiting approval",
         "calendar_link": calendar_link
     }
