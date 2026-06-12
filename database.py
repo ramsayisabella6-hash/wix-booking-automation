@@ -28,6 +28,7 @@ class BookingRecord(Base):
     status = Column(String, default="pending")
     rule_warnings = Column(Text)
     calendar_link = Column(Text)
+    calendar_event_id = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

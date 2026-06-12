@@ -3,15 +3,15 @@ from datetime import time
 OPENING_HOURS = {
     0: None,  # Monday closed
     1: None,  # Tuesday closed
-    2: {"open": time(17, 0), "close": time(22, 0)},  # Wednesday
-    3: {"open": time(17, 0), "close": time(22, 0)},  # Thursday
-    4: {"open": time(17, 0), "close": time(0, 0)},   # Friday
+    2: {"open": time(17, 0), "close": time(20, 0)},  # Wednesday
+    3: {"open": time(17, 0), "close": time(20, 0)},  # Thursday
+    4: {"open": time(12, 0), "close": time(0, 0)},   # Friday
     5: {"open": time(12, 0), "close": time(0, 0)},   # Saturday
-    6: {"open": time(12, 0), "close": time(22, 0)},  # Sunday
+    6: {"open": time(12, 0), "close": time(18, 0)},  # Sunday
 }
 
 MAX_GUESTS_BEFORE_ALERT = 100
-MIN_GUESTS = 20
+MIN_GUESTS = 0
 
 
 def is_within_opening_hours(start_time):

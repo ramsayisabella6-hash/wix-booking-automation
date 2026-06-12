@@ -4,7 +4,7 @@ from pydantic import BaseModel, EmailStr
 from datetime import datetime, timedelta
 import os
 
-from calendar_service import create_booking_event
+from calendar_service import create_booking_event, update_booking_event_title
 from email_service import send_customer_email, send_staff_email
 from rules import validate_booking_rules, MAX_GUESTS_BEFORE_ALERT
 from database import SessionLocal, BookingRecord, create_tables
@@ -41,7 +41,9 @@ def receive_booking(booking: BookingRequest):
         rule_status = f"⚠️ Rule warning: {rule_message}"
         calendar_title = f"REVIEW REQUIRED - {booking.name}"
 
-    calendar_link = create_booking_event(
+    calendar_result = create_booking_event(
+        calendar_link = calendar_result["link"]
+        calendar_event_id = calendar_result["event_id"]
         name=calendar_title,
         email=booking.email,
         phone=booking.phone,
@@ -49,6 +51,7 @@ def receive_booking(booking: BookingRequest):
         start_time=booking.start_time,
         end_time=end_time,
         details=f"""
+        
 STATUS: PENDING APPROVAL
 
 Customer has NOT been sent confirmation yet.
@@ -74,6 +77,7 @@ Customer details:
         status="pending",
         rule_warnings=rule_status,
         calendar_link=calendar_link
+        calendar_event_id=calendar_event_id,
     )
 
     db.add(booking_record)
@@ -234,7 +238,11 @@ def approve_booking(booking_id: int):
         """
 
     booking.status = "approved"
-    db.commit()
+    if booking.calendar_event_id:
+    update_booking_event_title(
+        booking.calendar_event_id,
+        f"CONFIRMED - {booking.name} - {booking.guests} guests"
+    )db.commit()
 
     customer_email = booking.email
     customer_name = booking.name
@@ -281,7 +289,11 @@ def reject_booking(booking_id: int):
         """
 
     booking.status = "rejected"
-    db.commit()
+    if booking.calendar_event_id:
+    update_booking_event_title(
+        booking.calendar_event_id,
+        f"❌ REJECTED - {booking.name} - {booking.guests} guests"
+    )db.commit()
     db.close()
 
     return """

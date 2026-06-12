@@ -49,4 +49,26 @@ Details:
         body=event
     ).execute()
 
-    return created_event.get("htmlLink")
+    return {
+    "link": created_event.get("htmlLink"),
+    "event_id": created_event.get("id")
+}
+
+def update_booking_event_title(event_id, new_title):
+    service = get_calendar_service()
+    calendar_id = os.getenv("GOOGLE_CALENDAR_ID")
+
+    event = service.events().get(
+        calendarId=calendar_id,
+        eventId=event_id
+    ).execute()
+
+    event["summary"] = new_title
+
+    updated_event = service.events().update(
+        calendarId=calendar_id,
+        eventId=event_id,
+        body=event
+    ).execute()
+
+    return updated_event.get("htmlLink")
