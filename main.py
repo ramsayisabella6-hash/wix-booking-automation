@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, EmailStr
 from datetime import datetime, timedelta
@@ -42,8 +42,6 @@ def receive_booking(booking: BookingRequest):
         calendar_title = f"REVIEW REQUIRED - {booking.name}"
 
     calendar_result = create_booking_event(
-        calendar_link = calendar_result["link"]
-        calendar_event_id = calendar_result["event_id"]
         name=calendar_title,
         email=booking.email,
         phone=booking.phone,
@@ -51,7 +49,6 @@ def receive_booking(booking: BookingRequest):
         start_time=booking.start_time,
         end_time=end_time,
         details=f"""
-        
 STATUS: PENDING APPROVAL
 
 Customer has NOT been sent confirmation yet.
@@ -63,6 +60,9 @@ Customer details:
 {booking.details}
 """
     )
+
+    calendar_link = calendar_result["link"]
+    calendar_event_id = calendar_result["event_id"]
 
     db = SessionLocal()
 
@@ -76,7 +76,7 @@ Customer details:
         details=booking.details,
         status="pending",
         rule_warnings=rule_status,
-        calendar_link=calendar_link
+        calendar_link=calendar_link,
         calendar_event_id=calendar_event_id,
     )
 
@@ -87,42 +87,21 @@ Customer details:
     booking_id = booking_record.id
     db.close()
 
-    base_url = os.getenv(
-        "BASE_URL",
-        "https://wix-booking-automation.onrender.com"
-    )
-
+    base_url = os.getenv("BASE_URL", "https://wix-booking-automation.onrender.com")
     review_link = f"{base_url}/review-booking/{booking_id}"
 
-    # Sends staff an email with the review link.
     send_staff_email_with_review_link(booking, rule_status, review_link)
-
-    # Optional SMS alert. Leave commented unless you have sms_service.py working.
-    """
-    if booking.guests >= MAX_GUESTS_BEFORE_ALERT or not is_valid:
-        send_sms_alert(
-            f"Booking needs review: {booking.name}, "
-            f"{booking.guests} guests, {booking.start_time}. "
-            f"Review: {review_link}"
-        )
-    """
 
     return {
         "status": "pending",
         "message": "Booking received and awaiting approval",
         "rule_check": rule_status,
         "review_link": review_link,
-        "calendar_link": calendar_link
+        "calendar_link": calendar_link,
     }
 
 
 def send_staff_email_with_review_link(booking, rule_status, review_link):
-    """
-    This uses your existing send_staff_email function if you have it.
-    If your email_service.py only prints test emails, this will still be okay
-    once you update email_service.py later.
-    """
-
     print("NEW BOOKING NEEDS REVIEW")
     print(f"Name: {booking.name}")
     print(f"Email: {booking.email}")
@@ -146,19 +125,12 @@ def review_booking(booking_id: int):
     db.close()
 
     if not booking:
-        return """
-        <html>
-            <body style="font-family: Arial; padding: 30px;">
-                <h1>Booking not found</h1>
-            </body>
-        </html>
-        """
+        return "<h1>Booking not found</h1>"
 
     return f"""
     <html>
         <body style="font-family: Arial; padding: 30px; max-width: 700px; margin: auto;">
             <h1>Booking Request</h1>
-
             <h2>Status: {booking.status.upper()}</h2>
 
             <p><b>Name:</b> {booking.name}</p>
@@ -181,14 +153,7 @@ def review_booking(booking_id: int):
             <br>
 
             <a href="/approve-booking/{booking.id}">
-                <button style="
-                    font-size: 24px;
-                    padding: 15px 25px;
-                    background: green;
-                    color: white;
-                    border: none;
-                    border-radius: 8px;
-                ">
+                <button style="font-size: 24px; padding: 15px 25px; background: green; color: white; border: none; border-radius: 8px;">
                     APPROVE BOOKING
                 </button>
             </a>
@@ -196,14 +161,7 @@ def review_booking(booking_id: int):
             <br><br>
 
             <a href="/reject-booking/{booking.id}">
-                <button style="
-                    font-size: 24px;
-                    padding: 15px 25px;
-                    background: red;
-                    color: white;
-                    border: none;
-                    border-radius: 8px;
-                ">
+                <button style="font-size: 24px; padding: 15px 25px; background: red; color: white; border: none; border-radius: 8px;">
                     REJECT BOOKING
                 </button>
             </a>
@@ -219,30 +177,21 @@ def approve_booking(booking_id: int):
 
     if not booking:
         db.close()
-        return """
-        <html>
-            <body style="font-family: Arial; padding: 30px;">
-                <h1>Booking not found</h1>
-            </body>
-        </html>
-        """
+        return "<h1>Booking not found</h1>"
 
     if booking.status == "approved":
         db.close()
-        return """
-        <html>
-            <body style="font-family: Arial; padding: 30px;">
-                <h1>Booking was already approved</h1>
-            </body>
-        </html>
-        """
+        return "<h1>Booking was already approved</h1>"
 
     booking.status = "approved"
+
     if booking.calendar_event_id:
-    update_booking_event_title(
-        booking.calendar_event_id,
-        f"CONFIRMED - {booking.name} - {booking.guests} guests"
-    )db.commit()
+        update_booking_event_title(
+            booking.calendar_event_id,
+            f"CONFIRMED - {booking.name} - {booking.guests} guests"
+        )
+
+    db.commit()
 
     customer_email = booking.email
     customer_name = booking.name
@@ -250,17 +199,8 @@ def approve_booking(booking_id: int):
 
     db.close()
 
-    try:
-        send_customer_email(
-            to_email=customer_email,
-            name=customer_name,
-            start_time=start_time
-        )
-        email_status = "Confirmation email sent to customer."
-    except Exception as error:
-        print("Customer confirmation email failed.")
-        print(error)
-        email_status = "Booking approved, but confirmation email failed."
+    # Email currently disabled while testing.
+    email_status = "Booking approved. Confirmation email is currently disabled."
 
     return f"""
     <html>
@@ -280,20 +220,17 @@ def reject_booking(booking_id: int):
 
     if not booking:
         db.close()
-        return """
-        <html>
-            <body style="font-family: Arial; padding: 30px;">
-                <h1>Booking not found</h1>
-            </body>
-        </html>
-        """
+        return "<h1>Booking not found</h1>"
 
     booking.status = "rejected"
+
     if booking.calendar_event_id:
-    update_booking_event_title(
-        booking.calendar_event_id,
-        f"❌ REJECTED - {booking.name} - {booking.guests} guests"
-    )db.commit()
+        update_booking_event_title(
+            booking.calendar_event_id,
+            f"❌ REJECTED - {booking.name} - {booking.guests} guests"
+        )
+
+    db.commit()
     db.close()
 
     return """
