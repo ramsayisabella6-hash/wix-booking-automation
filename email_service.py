@@ -10,8 +10,12 @@ def send_email(to_email, subject, body):
     sender = os.getenv("EMAIL_USER")
     password = os.getenv("EMAIL_PASSWORD")
 
-    if not sender or not password or not to_email:
-        print("Email skipped. Missing EMAIL_USER, EMAIL_PASSWORD, or recipient.")
+    if not sender or not password:
+        print("Email skipped: Missing EMAIL_USER or EMAIL_PASSWORD.")
+        return
+
+    if not to_email:
+        print("Email skipped: No recipient provided.")
         return
 
     msg = EmailMessage()
@@ -20,14 +24,14 @@ def send_email(to_email, subject, body):
     msg["To"] = to_email
     msg.set_content(body)
 
-
     try:
-    with smtplib.SMTP_SSL("mail.nomadbrewingco.com.au", 465, timeout=10) as smtp:
-        smtp.login(sender, password)
-        smtp.send_message(msg)
+        with smtplib.SMTP_SSL("mail.nomadbrewingco.com.au", 465, timeout=10) as smtp:
+            smtp.login(sender, password)
+            smtp.send_message(msg)
+            print(f"Email sent to {to_email}")
 
-except Exception as e:
-    print(f"Email failed: {e}")
+    except Exception as e:
+        print(f"Email failed: {e}")
 
 
 def send_staff_review_email(booking, rule_status, review_link):
