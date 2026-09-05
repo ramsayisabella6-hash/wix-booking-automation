@@ -18,68 +18,62 @@ MIN_HOURS_NOTICE = 2
 MINUTES_BEFORE_CLOSE_WARNING = 60
 
 
-def get_booking_warnings(booking):
+def get_booking_rule_result(booking):
     """
     IMPORTANT: booking.start_time must already be a *naive* datetime
     representing Sydney local wall-clock time (see normalize_to_sydney
-    in main.py, which does this before rules are checked). If you ever
-    call this function with a raw/unnormalized datetime, these checks
-    will silently be wrong on any server not physically located in Sydney.
-    """
-    warnings = []
+    in main.py, which does this before rules are checked).
 
-    if booking.guests < MIN_GUESTS:
-        warnings.append(
-            f"Minimum guests is {MIN_GUESTS}, but booking has {booking.guests}."
-        )
+    Returns a dict with two separate lists:
+      - "hard_stops": violations that should cause an automatic REJECTION
+        (the booking is impossible - wrong day/time/notice - no amount of
+        owner judgment changes that).
+      - "soft_warnings": things that are still a *legitimate* booking but
+        need a human to look at it (big group, near capacity, etc).
+        These are combined with the guest/capacity checks in main.py.
+    """
+    hard_stops = []
+    soft_warnings = []
 
     day = booking.start_time.weekday()
     hours = OPENING_HOURS.get(day)
 
     if hours is None:
-        warnings.append("Booking is on a closed day.")
+        hard_stops.append("Booking is on a closed day.")
     else:
         booking_time = booking.start_time.time()
         open_time = hours["open"]
         close_time = hours["close"]
 
         if booking_time < open_time:
-            warnings.append("Booking is before opening time.")
+            hard_stops.append("Booking is before opening time.")
 
         if booking_time > close_time:
-            warnings.append("Booking is after closing time.")
+            hard_stops.append("Booking is after closing time.")
 
         close_datetime = datetime.combine(
             booking.start_time.date(),
             close_time,
         )
         booking_datetime = booking.start_time.replace(tzinfo=None)
-
         time_until_close = close_datetime - booking_datetime
 
         if timedelta(0) <= time_until_close <= timedelta(
             minutes=MINUTES_BEFORE_CLOSE_WARNING
         ):
-            warnings.append("Booking is too close to closing time.")
+            soft_warnings.append("Booking is within 1 hour of closing.")
 
-    # Compare against the current time in Sydney, not server-local time
-    # (Render's servers run in UTC, which would otherwise throw this off
-    # by 10-11 hours).
     now_sydney_naive = datetime.now(SYDNEY_TZ).replace(tzinfo=None)
     booking_naive = booking.start_time.replace(tzinfo=None)
 
     if booking_naive - now_sydney_naive < timedelta(hours=MIN_HOURS_NOTICE):
-        warnings.append(
+        soft_warnings.append(
             f"Booking is less than {MIN_HOURS_NOTICE} hours away."
         )
 
-    return warnings
+    if booking.guests < MIN_GUESTS:
+        hard_stops.append(
+            f"Minimum guests is {MIN_GUESTS}, but booking has {booking.guests}."
+        )
 
-
-def validate_booking_rules(booking):
-    warnings = get_booking_warnings(booking)
-
-    if warnings:
-        return False, "\n".join(warnings)
-
-    return True, "Booking meets current rules."
+    return {"hard_stops": hard_stops, "soft_warnings": soft_warnings}

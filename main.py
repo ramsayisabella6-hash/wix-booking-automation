@@ -15,7 +15,7 @@ from email_service import (
     send_customer_rejected_email,
     send_customer_reminder_email,
 )
-from rules import validate_booking_rules
+from rules import get_booking_rule_result
 from database import SessionLocal, BookingRecord, create_tables
 
 from notification_service import (
@@ -153,28 +153,25 @@ def receive_booking(booking: BookingRequest, x_webhook_secret: str | None = Head
 
     db = SessionLocal()
     try:
-        is_valid, rule_message = validate_booking_rules(booking)
+        rule_result = get_booking_rule_result(booking)
+        hard_stops = rule_result["hard_stops"]
+        soft_warnings = list(rule_result["soft_warnings"])
 
         current_daily_total = get_daily_approved_guest_total(db, booking.start_time.date())
         total_if_approved = current_daily_total + booking.guests
         high_demand_note = get_high_demand_note(booking.start_time.date())
 
-        warnings = []
-
-        # Normal booking-rule warnings, such as closed days or invalid times.
-        if not is_valid and rule_message:
-            warnings.append(rule_message)
-
-        # More than 20 guests must be approved by the owner.
+        # More than 20 guests must be approved by the owner (not an outright
+        # rejection - just needs a human to say yes/no).
         if booking.guests > OWNER_APPROVAL_GUEST_LIMIT:
-            warnings.append(
+            soft_warnings.append(
                 f"Owner approval required: this booking is for {booking.guests} guests. "
                 f"Bookings above {OWNER_APPROVAL_GUEST_LIMIT} guests need approval."
             )
 
         # Warn if approving this booking would exceed the daily guest limit.
         if total_if_approved > DAILY_GUEST_LIMIT:
-            warnings.append(
+            soft_warnings.append(
                 f"Daily capacity warning: currently {current_daily_total} approved guests. "
                 f"This booking would bring the day to {total_if_approved}, "
                 f"over the limit of {DAILY_GUEST_LIMIT}."
@@ -182,15 +179,34 @@ def receive_booking(booking: BookingRequest, x_webhook_secret: str | None = Head
 
         # High-demand dates also require owner review.
         if high_demand_note:
-            warnings.append(f"High-demand day: {high_demand_note}")
+            soft_warnings.append(f"High-demand day: {high_demand_note}")
 
-        needs_owner_approval = len(warnings) > 0
+        is_hard_rejected = len(hard_stops) > 0
+        needs_owner_approval = (not is_hard_rejected) and len(soft_warnings) > 0
         end_time = booking.start_time + timedelta(hours=3)
 
-        if needs_owner_approval:
+        if is_hard_rejected:
+            status = "rejected"
+            customer_response = "not_sent"
+            rule_status = "❌ Automatically rejected:\n" + "\n".join(hard_stops)
+            calendar_title = f"❌ AUTO-REJECTED - {booking.name} - {booking.guests} guests"
+            calendar_color = "11"
+            calendar_details = f"""STATUS: AUTO-REJECTED
+
+This booking was automatically rejected - it violates a hard rule
+(closed day, outside hours, or not enough notice) rather than needing
+owner judgment.
+
+Rule check:
+{rule_status}
+
+Customer details:
+{booking.details}
+"""
+        elif needs_owner_approval:
             status = "pending"
             customer_response = "not_sent"
-            rule_status = "⚠️ Owner review required:\n" + "\n".join(warnings)
+            rule_status = "⚠️ Owner review required:\n" + "\n".join(soft_warnings)
             calendar_title = f"REVIEW REQUIRED - {booking.name}"
             calendar_color = "5"
             calendar_details = f"""STATUS: PENDING APPROVAL
@@ -252,6 +268,21 @@ Customer details:
 
     finally:
         db.close()
+
+    if is_hard_rejected:
+        # No owner action needed - just let the customer know politely.
+        send_customer_rejected_email(
+            booking.email,
+            booking.name,
+            booking.start_time,
+        )
+        notify_booking_rejected(booking)
+
+        return {
+            "status": "rejected",
+            "message": "Booking automatically declined - outside opening hours, on a closed day, or too little notice",
+            "rule_check": rule_status,
+        }
 
     if needs_owner_approval:
         review_link = f"{get_base_url()}/review-booking/{booking_id}?secret={get_secret()}"
