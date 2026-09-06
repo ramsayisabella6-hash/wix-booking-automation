@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, time
 from zoneinfo import ZoneInfo
 import os
 import html
+import secrets
 
 from calendar_service import create_booking_event, update_booking_event_status
 from email_service import (
@@ -17,8 +18,10 @@ from email_service import (
 )
 from rules import get_booking_rule_result
 from database import SessionLocal, BookingRecord, create_tables
+from wix_payload import parse_wix_payload
 
 from notification_service import (
+    send_owner_notification,
     notify_booking_needs_review,
     notify_booking_auto_confirmed,
     notify_booking_approved,
@@ -74,17 +77,41 @@ def check_secret(secret: str):
 def check_webhook_secret(provided: str | None):
     """
     Protects /wix-booking from randoms hitting the endpoint directly and
-    spamming your calendar/inbox/Telegram with fake bookings. Set
-    WIX_WEBHOOK_SECRET in your environment and send the same value as an
-    'X-Webhook-Secret' header from your Wix backend code.
+    spamming your calendar/inbox/Telegram with fake bookings.
+
+    The secret can arrive two ways:
+      - an 'X-Webhook-Secret' header (used by anything we control)
+      - a '?secret=...' query parameter on the URL
+
+    The query parameter exists because the Wix Automations "Send HTTP
+    request" action lets you set the method, URL and body, but gives you
+    no way to add a custom header. It does let you put parameters in the
+    URL, so that is the route Wix uses.
     """
     expected = os.getenv("WIX_WEBHOOK_SECRET")
     if not expected:
         # Fail fast in production if this hasn't been configured, so you
         # don't accidentally ship the endpoint wide open.
         raise RuntimeError("WIX_WEBHOOK_SECRET environment variable must be set")
-    if provided != expected:
+    if not provided or not secrets.compare_digest(str(provided), expected):
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
+
+
+def build_booking_request(payload: dict) -> BookingRequest:
+    """
+    Accepts either shape:
+
+      - the flat JSON this app was originally written for
+        ({"name": ..., "email": ..., "start_time": ..., "guests": ...})
+      - the nested payload a Wix Automation actually sends
+
+    Keeping both means direct API tests and any future integration still
+    work exactly as before.
+    """
+    if isinstance(payload, dict) and "start_time" in payload and "name" in payload:
+        return BookingRequest(**payload)
+
+    return BookingRequest(**parse_wix_payload(payload))
 
 
 def get_base_url():
@@ -144,8 +171,28 @@ def manager_redirect(secret: str):
 
 
 @app.post("/wix-booking")
-def receive_booking(booking: BookingRequest, x_webhook_secret: str | None = Header(default=None)):
-    check_webhook_secret(x_webhook_secret)
+def receive_booking(
+    payload: dict,
+    secret: str | None = None,
+    x_webhook_secret: str | None = Header(default=None),
+):
+    check_webhook_secret(x_webhook_secret or secret)
+
+    try:
+        booking = build_booking_request(payload)
+    except Exception as error:
+        # A booking that silently vanishes is the worst possible outcome,
+        # so make sure a human hears about it immediately.
+        send_owner_notification(
+            "\u26a0\ufe0f A booking arrived but could not be read.\n\n"
+            f"Problem: {error}\n\n"
+            "The customer has NOT been booked in. "
+            "Check the Wix form fields and contact them directly."
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not read booking payload: {error}",
+        )
 
     # Normalize the incoming time to a naive Sydney wall-clock datetime
     # before anything else touches it (rules checks, storage, calendar).
