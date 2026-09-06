@@ -1,44 +1,51 @@
 import os
-import smtplib
-from email.message import EmailMessage
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
+SENDGRID_URL = "https://api.sendgrid.com/v3/mail/send"
+
 
 def send_email(to_email, subject, body):
-    sender = os.getenv("EMAIL_USER")
-    password = os.getenv("EMAIL_PASSWORD")
+    """
+    Sends email via SendGrid's HTTP API rather than raw SMTP.
+    Render (and many cloud hosts) block outbound SMTP connections entirely
+    at the network level - this is not a credentials issue, it's why SMTP
+    always failed with "Network is unreachable" no matter what mail server
+    or password was used. HTTPS-based APIs like SendGrid are not blocked.
+    """
+    api_key = os.getenv("SENDGRID_API_KEY")
+    from_email = os.getenv("EMAIL_FROM")
 
-    # Configurable so you can point this at Gmail for testing and the
-    # real nomadbrewingco.com.au mail server later, without code changes.
-    # For Gmail: EMAIL_HOST=smtp.gmail.com, EMAIL_PORT=465 (SSL) and
-    # EMAIL_PASSWORD must be a 16-character Gmail "App Password", not
-    # your normal Gmail password.
-    smtp_host = os.getenv("EMAIL_HOST", "mail.nomadbrewingco.com.au")
-    smtp_port = int(os.getenv("EMAIL_PORT", "465"))
-
-    if not sender or not password:
-        print("Email skipped: Missing EMAIL_USER or EMAIL_PASSWORD.")
+    if not api_key or not from_email:
+        print("Email skipped: Missing SENDGRID_API_KEY or EMAIL_FROM.")
         return
 
     if not to_email:
         print("Email skipped: No recipient provided.")
         return
 
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = sender
-    msg["To"] = to_email
-    msg.set_content(body)
+    payload = {
+        "personalizations": [{"to": [{"email": to_email}]}],
+        "from": {"email": from_email},
+        "subject": subject,
+        "content": [{"type": "text/plain", "value": body}],
+    }
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
 
     try:
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10) as smtp:
-            smtp.login(sender, password)
-            smtp.send_message(msg)
+        response = requests.post(SENDGRID_URL, json=payload, headers=headers, timeout=10)
+        if response.status_code in (200, 202):
             print(f"Email sent to {to_email}")
+        else:
+            print(f"Email failed ({response.status_code}): {response.text}")
     except Exception as e:
-        print(f"Email failed ({smtp_host}:{smtp_port}): {e}")
+        print(f"Email failed (exception): {e}")
 
 
 def send_staff_review_email(booking, rule_status, review_link):
