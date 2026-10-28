@@ -18,6 +18,12 @@ def send_email(to_email, subject, body):
     api_key = os.getenv("SENDGRID_API_KEY")
     from_email = os.getenv("EMAIL_FROM")
 
+    # What customers see as the sender's NAME (e.g. "Nomad Brewing Co"),
+    # and an optional address that replies go to. Replies matter because
+    # the "from" address is often not a mailbox anyone reads.
+    from_name = os.getenv("EMAIL_FROM_NAME", "Nomad Brewing Co")
+    reply_to = os.getenv("EMAIL_REPLY_TO")
+
     if not api_key or not from_email:
         print("Email skipped: Missing SENDGRID_API_KEY or EMAIL_FROM.")
         return
@@ -28,10 +34,13 @@ def send_email(to_email, subject, body):
 
     payload = {
         "personalizations": [{"to": [{"email": to_email}]}],
-        "from": {"email": from_email},
+        "from": {"email": from_email, "name": from_name},
         "subject": subject,
         "content": [{"type": "text/plain", "value": body}],
     }
+
+    if reply_to:
+        payload["reply_to"] = {"email": reply_to}
 
     headers = {
         "Authorization": f"Bearer {api_key}",
