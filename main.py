@@ -19,6 +19,9 @@ from email_service import (
 from rules import get_booking_rule_result
 from database import SessionLocal, BookingRecord, create_tables
 from wix_payload import parse_wix_payload
+from notification_service import handle_non_booking_form
+from blocked_dates import router as blocked_dates_router, get_blocked_reason
+from enquiries import router as enquiries_router
 
 from notification_service import (
     send_owner_notification,
@@ -31,6 +34,8 @@ from notification_service import (
 
 app = FastAPI()
 create_tables()
+app.include_router(blocked_dates_router)
+app.include_router(enquiries_router)
 
 DAILY_GUEST_LIMIT = 150
 OWNER_APPROVAL_GUEST_LIMIT = 20
@@ -178,6 +183,12 @@ def receive_booking(
 ):
     check_webhook_secret(x_webhook_secret or secret)
 
+    # Wholesale, private label and any other NON-booking form must never
+    # be treated as a booking: send the short Telegram heads-up and stop.
+    non_booking_reply = handle_non_booking_form(payload)
+    if non_booking_reply is not None:
+        return non_booking_reply
+
     try:
         booking = build_booking_request(payload)
     except Exception as error:
@@ -201,7 +212,15 @@ def receive_booking(
     db = SessionLocal()
     try:
         rule_result = get_booking_rule_result(booking)
-        hard_stops = rule_result["hard_stops"]
+        hard_stops = list(rule_result["hard_stops"])
+
+        # Days the owner/manager has blocked off on the Blocked days page.
+        blocked_reason = get_blocked_reason(db, booking.start_time.date())
+        if blocked_reason is not None:
+            hard_stops.append(
+                "Bookings are blocked on this date"
+                + (f" ({blocked_reason})." if blocked_reason else ".")
+            )
         soft_warnings = list(rule_result["soft_warnings"])
 
         current_daily_total = get_daily_approved_guest_total(db, booking.start_time.date())
@@ -706,6 +725,7 @@ def bookings_dashboard(secret: str):
     <html>
         <body style="font-family: Arial; padding: 30px;">
             <h1>Nomad Booking Dashboard</h1>
+            <p><a href="/blocked-dates?secret={secret}">Manage blocked days</a></p>
 
             <table border="1" cellpadding="10" cellspacing="0" style="border-collapse:collapse; width:100%;">
                 <tr>
